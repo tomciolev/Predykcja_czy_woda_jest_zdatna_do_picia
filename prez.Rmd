@@ -1,0 +1,192 @@
+---
+title: "Analiza wody pod względem tego, czy jest zdatna do picia"
+subtitle: "Czyszczenie danych, wizualizacja, model przewiwydwania"
+date: '`r Sys.Date()`'
+output: html_document
+---
+<center>
+![](https://www.designingbuildings.co.uk/w/images/e/e9/Drinking_water-3445987_640.jpg)
+</center>
+# Ogólne przedstawienie problemu oraz zestawu danych
+## Przedstawienie problemu
+Wszyscy wiemy jak ważna jest woda w naszym życiu. Na świecie panuje kryzys wodny. W niektórych krajach,
+które kupują wodę pitną i przewożą ją w tankowcach. Kryzys będzie się powiększał w przyszłości.
+
+## Informacje o zbiorze danych
+Zbiór danych składa się z 10 zmiennych, 9 z nich jest numerycznych, a jedna kategoryczna (0 lub 1)
+woda zdatna do picia (1), woda nie zdatna do picia (0).
+
+## Zawartość
+Zbiór danych zawiera 3267 różnych pomiarów wody.
+
+1. **ph Value:** PH jest ważnym parametrem w ocenie równowagi kwasowo-zasadowej wody.
+2.  **Hardness:** Twardość jest powodowana głównie przez sole wapnia i magnezu.
+3.  **Solids (Total dissolved solids - TDS)**: (Ciała stałe) Woda ma zdolność rozpuszczania szerokiej gamy nieorganicznych i niektórych organicznych minerałów lub soli, takich jak potas, wapń, sód, wodorowęglany, chlorki, magnez, siarczany itp.
+4.  **Chloramines:** Chlor i chloramina to główne środki dezynfekujące stosowane w publicznych systemach wodociągowych..
+5.  **Sulfate:** Siarczany to naturalnie występujące substancje, które znajdują się w minerałach, glebie i skałach.
+6.  **Conductivity:** (Przewodność) Czysta woda nie jest dobrym przewodnikiem prądu elektrycznego, a raczej dobrym izolatorem. Wzrost stężenia jonów poprawia przewodnictwo elektryczne wody.
+7.  **Organic_carbon:** Całkowity węgiel organiczny (TOC) w wodach źródłowych pochodzi z rozkładającej się naturalnej materii organicznej (NOM), a także ze źródeł syntetycznych.
+8.  **Trihalomethanes:** THM to substancje chemiczne, które można znaleźć w wodzie uzdatnionej chlorem.
+9.  **Turbidity:** (Mętność) Zmętnienie wody zależy od ilości ciał stałych obecnych w stanie zawieszonym.
+10. **Potability:** (Zdatność do picia) Wskazuje, czy woda jest bezpieczna do spożycia przez ludzi, gdzie 1 oznacza zdatną do picia, a 0 oznacza niezdatną do picia.
+
+# Wczytywanie i analiza danych
+```{r load libraries, include = F}
+library(dplyr)
+library(ggplot2)
+library(skimr)
+library(forcats)
+library(corrplot)
+library(caret)
+library(randomForest)
+```
+### Wczytywanie danych
+```{r Read Data}
+df <- read.csv('water_potability.csv') %>% glimpse()
+```
+### Zamiana zmiennej "Potability" na zmienną  kategoryczną oraz zerknięcie na dane
+```{r}
+df <- df %>% mutate(Potability = as.factor(Potability))
+colnames(df) <- tolower(colnames(df))
+glimpse(df)
+summary(df)
+```
+### Brakujące wartośći
+Jak można zauważyć w zbiorze danych istnieją brakujące wartości, teraz się nimi zajmiemy.
+```{r Missing data}
+df %>% summarise_all(~ sum(is.na(.)))
+```
+### Wykres gęstości braukjących wartości
+```{r Missing rate, echo = F}
+df %>% skim() %>%
+  filter(n_missing != 0) %>%
+  as_tibble() %>%
+  select(skim_variable, n_missing, complete_rate) %>%
+  mutate(missing_rate = round(abs(complete_rate - 1) * 100, 1)) %>%
+  ggplot(aes(
+    x = fct_reorder(skim_variable, n_missing),
+    y = missing_rate,
+    fill = skim_variable,
+    label = paste0(missing_rate, "%")
+  )) +
+  geom_col(width = 0.6) +
+  geom_text(
+    size = 4.5,
+    hjust = 1.2,
+    vjust = .25,
+    col = "white"
+  ) +
+  coord_flip() + theme(aspect.ratio = .4) +
+  theme(
+    legend.position = "none"
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x,"%")) +
+  labs(
+    title = "Procentowy rozkład brakujących wartości",
+    x = NULL,
+    y = NULL)
+```
+
+### Zamiana brakujących danych poprzez średnią 
+
+```{R Replacing missing data}
+for(i in 1:9){
+  df[is.na(df[,i]),i] <- mean(df[, i], na.rm = T)
+}
+```
+### Wykres rozkładu zdatności wody do picia
+``` {r Potability distribution, echo = F}
+df %>% select(potability) %>%
+  count(potability) %>% mutate(percent = paste0(round(n / sum(n) * 100), "%")) %>%
+  ggplot(aes(
+    x = potability,
+    y = n,
+    label = percent,
+    fill = potability
+  )) + 
+  geom_text(vjust = -0.2) +
+  geom_col() +
+  labs(
+    title = "Rozkład zdatności wody do pica",
+    y = "Quantity"
+  )
+```
+
+
+### Wielowymiarowy wykres gęstości
+``` {r}
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+featurePlot(x=df[,1:9],y=df[,10], plot = "density", scales = scales)
+```
+
+### Wielowymiarowy wykres pudełkowy
+
+``` {r}
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+featurePlot(x=df[,1:9],y=df[,10], plot = "box", scales = scales)
+```
+
+### Wykres korelacji
+``` {r Correlation plot}
+corrplot(
+  cor(df[, -10]),
+  type = "lower",
+  method = "circle",
+  number.cex = .9,
+  order = "alphabet",
+  tl.col = "#00796B",
+  tl.srt = 25,
+  title = "\nKorelacja pomiędzy zmiennymi"
+) 
+```
+
+# Tworzenie modelu
+### Utworzenie danych do trenowania i testowania
+``` {r validation dataset}
+train_index <- createDataPartition(df$potability, p = 0.8, list = F)
+test_set <- df[-train_index,]
+training_set <- df[train_index,]
+summary(training_set)
+```
+### 10-krotna walidacja krzyżowa metodą "CV"
+```{r}
+control <- trainControl(method = "cv", number = 10)
+metric = "Accuracy"
+```
+### Tworzenie modeli 
+``` {r}
+#Linear Discriminant Analysis (LDA)
+set.seed(7)
+fit.lda <- train(potability ~.,data=training_set,method="lda",metric=metric,trControl=control)
+#Classification and Regression Trees (CART).
+set.seed(7)
+fit.cart <- train(potability ~.,data=training_set,method="rpart",metric=metric,trControl=control)
+#k-Nearest Neighbors (kNN).
+set.seed(7)
+fit.knn <- train(potability ~.,data=training_set,method="knn",metric=metric,trControl=control)
+#Support Vector Machines (SVM) with a linear kernel.
+set.seed(7)
+fit.svm <- train(potability ~.,data=training_set,method="svmRadial",metric=metric,trControl=control)
+#Random Forest (RF)
+set.seed(7)
+fit.rf <- train(potability ~.,data=training_set,method="rf",metric=metric,trControl=control)
+```
+### Wybranie najlepszego modelu
+``` {r}
+results <- resamples(list(lda=fit.lda, cart=fit.cart, knn=fit.knn, svm=fit.svm, rf=fit.rf))
+summary(results)
+```
+Wybieramy model RandomForest i na jego podstawie zrobimy przewidywanie
+
+### Przewidywanie 
+``` {r}
+predictions <- predict(fit.rf, test_set)
+confusionMatrix(predictions, test_set$potability)
+```
+### Cechy wody, które dla naszego modelu są najważniejsze przy dokonywaniu predykcji
+``` {r}
+vars.imp <- varImp(fit.rf, scale = F)
+ggplot(vars.imp) +
+  geom_col(fill = "dark green", size = 1) +
+  labs(title = "Variables importance") 
+```
